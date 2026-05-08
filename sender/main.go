@@ -72,7 +72,8 @@ func main() {
 
 	// Stream List
 	streamListContainer := container.NewVBox()
-	refreshStreams := func() {
+	var refreshStreams func()
+	refreshStreams = func() {
 		streamListContainer.Objects = nil
 		conf := cm.GetConfig()
 		for i, s := range conf.Streams {
@@ -148,17 +149,10 @@ func main() {
 	// Stats
 	packetsLabel := widget.NewLabel("Packets Sent: 0")
 	bytesLabel := widget.NewLabel("Bytes Sent: 0")
-	targetStatusList := widget.NewList(
-		func() int { return len(cm.GetConfig().TargetIPs) },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
-		func(i binding.DataItem, o fyne.CanvasObject) {
-			// This is a bit complex for a quick list, I'll use a simpler approach
-		},
-	)
 
 	// Simpler status display
 	statusText := widget.NewMultiLineEntry()
-	statusText.SetReadOnly(true)
+	statusText.ReadOnly = true
 
 	go func() {
 		for {

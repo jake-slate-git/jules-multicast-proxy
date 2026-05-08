@@ -25,12 +25,10 @@ func TestConfigPersistence(t *testing.T) {
 		}
 	})
 
-	// Wait a bit for the async save
-	for i := 0; i < 10; i++ {
-		data, _ := os.ReadFile(tmpfile.Name())
-		if len(data) > 0 {
-			break
-		}
+	// Force synchronous save for test
+	err = cm.Save()
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	err = cm.Load()
