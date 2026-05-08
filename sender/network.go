@@ -35,11 +35,8 @@ type HeartbeatPayload struct {
 	DataPort int            `json:"data_port"`
 }
 
-// DataPacket is used to encapsulate UDP data with a stream identifier
-type DataPacket struct {
-	StreamID string `json:"s"`
-	Payload  []byte `json:"p"`
-}
+// Binary Header: 8 bytes for Stream ID (hashed) + payload
+const StreamIDHeaderSize = 8
 
 func (nm *NetworkManager) Start() {
 	nm.statusMu.Lock()
@@ -137,12 +134,17 @@ func (nm *NetworkManager) runStream(ctx context.Context, stream StreamConfig, ad
 		return
 	}
 
-	// Important for Windows: loopback might need to be disabled or enabled depending on source
 	if err := p.SetMulticastLoopback(true); err != nil {
 		fmt.Printf("Error setting multicast loopback: %v\n", err)
 	}
 
+	// Prepare binary header (using first 8 bytes of ID as a simple unique prefix)
+	header := make([]byte, StreamIDHeaderSize)
+	copy(header, stream.ID)
+
 	buf := make([]byte, 65535)
+	outBuf := make([]byte, 65535+StreamIDHeaderSize)
+	copy(outBuf, header)
 
 	outConn, err := net.ListenPacket("udp4", "0.0.0.0:0")
 	if err != nil {
@@ -150,6 +152,10 @@ func (nm *NetworkManager) runStream(ctx context.Context, stream StreamConfig, ad
 		return
 	}
 	defer outConn.Close()
+
+	var lastTargets []string
+	var targetAddrs []*net.UDPAddr
+	var lastPort int
 
 	for {
 		select {
@@ -165,13 +171,18 @@ func (nm *NetworkManager) runStream(ctx context.Context, stream StreamConfig, ad
 				return
 			}
 
+			// Update target addresses only if config changed
 			config := nm.cm.GetConfig()
-			var targetAddrs []*net.UDPAddr
-			for _, t := range config.TargetIPs {
-				addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", t, config.DataPort))
-				if err == nil {
-					targetAddrs = append(targetAddrs, addr)
+			if !equalStrings(lastTargets, config.TargetIPs) || lastPort != config.DataPort {
+				targetAddrs = nil
+				for _, t := range config.TargetIPs {
+					addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", t, config.DataPort))
+					if err == nil {
+						targetAddrs = append(targetAddrs, addr)
+					}
 				}
+				lastTargets = config.TargetIPs
+				lastPort = config.DataPort
 			}
 
 			nm.statusMu.Lock()
@@ -179,25 +190,30 @@ func (nm *NetworkManager) runStream(ctx context.Context, stream StreamConfig, ad
 			nm.BytesSent += int64(n * len(targetAddrs))
 			nm.statusMu.Unlock()
 
-			// Encapsulate
-			packet := DataPacket{
-				StreamID: stream.ID,
-				Payload:  buf[:n],
-			}
-			data, _ := json.Marshal(packet)
+			// Encapsulate with binary header
+			copy(outBuf[StreamIDHeaderSize:], buf[:n])
+			totalSize := n + StreamIDHeaderSize
 
 			for _, addr := range targetAddrs {
-				outConn.WriteTo(data, addr)
+				outConn.WriteTo(outBuf[:totalSize], addr)
 			}
 		}
 	}
 }
 
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func GetInterfaces() []string {
-	// In a real Windows environment, one would use platform-specific APIs
-	// or "netsh interface show interface" to get friendly names.
-	// For this implementation, we will use net.Interfaces() but include a
-	// placeholder for where friendly name logic would integrate.
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return []string{}
@@ -208,10 +224,9 @@ func GetInterfaces() []string {
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 				if ipnet.IP.To4() != nil {
-					// On Windows, i.Name might be {GUID}.
-					// A more advanced implementation would use 'golang.org/x/sys/windows'
-					// to map Index/Name to Friendly Name.
-					res = append(res, fmt.Sprintf("%s (%s)", i.Name, ipnet.IP.String()))
+					mask := ipnet.Mask
+					ones, _ := mask.Size()
+					res = append(res, fmt.Sprintf("%s (%s/%d)", i.Name, ipnet.IP.String(), ones))
 				}
 			}
 		}

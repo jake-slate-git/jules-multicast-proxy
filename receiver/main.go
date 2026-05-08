@@ -27,8 +27,7 @@ func main() {
 	}()
 
 	// UI
-	statusList := widget.NewMultiLineEntry()
-	statusList.ReadOnly = true
+	statusLabel := widget.NewLabel("")
 
 	go func() {
 		for {
@@ -45,14 +44,14 @@ func main() {
 				sb.WriteString("\n")
 			}
 			rm.mu.RUnlock()
-			statusList.SetText(sb.String())
+			statusLabel.SetText(sb.String())
 		}
 	}()
 
 	w.SetContent(container.NewVBox(
 		widget.NewLabelWithStyle("Receiver Status Dashboard", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 		widget.NewSeparator(),
-		container.NewStack(statusList),
+		container.NewVScroll(statusLabel),
 	))
 
 	w.Resize(fyne.NewSize(500, 400))

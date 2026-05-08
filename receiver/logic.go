@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -25,10 +26,7 @@ type HeartbeatPayload struct {
 	DataPort int            `json:"data_port"`
 }
 
-type DataPacket struct {
-	StreamID string `json:"s"`
-	Payload  []byte `json:"p"`
-}
+const StreamIDHeaderSize = 8
 
 type StreamState struct {
 	Config     StreamConfig
@@ -143,21 +141,27 @@ func (rm *ReceiverManager) runServer(ctx context.Context) {
 		default:
 			pc.SetReadDeadline(time.Now().Add(time.Second))
 			n, _, err := pc.ReadFrom(buf)
-			if err != nil {
+			if err != nil || n < StreamIDHeaderSize {
 				continue
 			}
 
-			var packet DataPacket
-			if err := json.Unmarshal(buf[:n], &packet); err != nil {
-				continue
-			}
+			// Extract Stream ID prefix
+			idPrefix := string(buf[:StreamIDHeaderSize])
 
 			rm.mu.RLock()
-			state, ok := rm.ActiveStreams[packet.StreamID]
-			if ok && state.OutConn != nil {
-				state.Packets++
-				state.Bytes += int64(len(packet.Payload))
-				state.OutConn.Write(packet.Payload)
+			// We need a way to match the prefix to the full ID
+			var targetState *StreamState
+			for id, state := range rm.ActiveStreams {
+				if strings.HasPrefix(id, idPrefix) {
+					targetState = state
+					break
+				}
+			}
+
+			if targetState != nil && targetState.OutConn != nil {
+				targetState.Packets++
+				targetState.Bytes += int64(n - StreamIDHeaderSize)
+				targetState.OutConn.Write(buf[StreamIDHeaderSize:n])
 			}
 			rm.mu.RUnlock()
 		}
