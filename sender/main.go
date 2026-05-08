@@ -8,7 +8,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 )
@@ -72,10 +71,18 @@ func main() {
 
 	// Stream List
 	streamListContainer := container.NewVBox()
+	var lastStreamCount int
 	var refreshStreams func()
 	refreshStreams = func() {
-		streamListContainer.Objects = nil
 		conf := cm.GetConfig()
+		if len(conf.Streams) == lastStreamCount {
+			// Basic heuristic to avoid full rebuild if count hasn't changed.
+			// In a real app, you'd compare actual content or use a List widget.
+			return
+		}
+		lastStreamCount = len(conf.Streams)
+
+		streamListContainer.Objects = nil
 		for i, s := range conf.Streams {
 			index := i
 			stream := s
@@ -91,6 +98,7 @@ func main() {
 					cm.UpdateConfig(func(c *AppConfig) {
 						c.Streams = append(c.Streams[:index], c.Streams[index+1:]...)
 					})
+					lastStreamCount = -1 // Force refresh
 					refreshStreams()
 				}),
 			)
@@ -125,6 +133,7 @@ func main() {
 				cm.UpdateConfig(func(c *AppConfig) {
 					c.Streams = append(c.Streams, newStream)
 				})
+				lastStreamCount = -1 // Force refresh
 				refreshStreams()
 			}
 		}, w)
@@ -151,8 +160,7 @@ func main() {
 	bytesLabel := widget.NewLabel("Bytes Sent: 0")
 
 	// Simpler status display
-	statusText := widget.NewMultiLineEntry()
-	statusText.ReadOnly = true
+	statusLabel := widget.NewLabel("")
 
 	go func() {
 		for {
@@ -165,7 +173,7 @@ func main() {
 			for ip, status := range nm.TargetStatus {
 				sb.WriteString(fmt.Sprintf("%s: %s\n", ip, status))
 			}
-			statusText.SetText(sb.String())
+			statusLabel.SetText(sb.String())
 			nm.statusMu.RUnlock()
 
 			refreshStreams()
@@ -191,7 +199,7 @@ func main() {
 			packetsLabel,
 			bytesLabel,
 			widget.NewLabel("Target Status:"),
-			statusText,
+			container.NewVScroll(statusLabel),
 		)),
 	)
 
