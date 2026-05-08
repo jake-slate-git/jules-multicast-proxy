@@ -28,7 +28,7 @@ func main() {
 
 	// UI
 	statusList := widget.NewMultiLineEntry()
-	statusList.SetReadOnly(true)
+	statusList.ReadOnly = true
 
 	go func() {
 		for {
