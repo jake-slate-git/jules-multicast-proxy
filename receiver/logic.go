@@ -32,6 +32,7 @@ type StreamState struct {
 	Config     StreamConfig
 	CancelFunc context.CancelFunc
 	LastSeen   time.Time
+	LastPacket time.Time
 	Packets    int64
 	Bytes      int64
 	OutConn    *net.UDPConn
@@ -45,6 +46,7 @@ type ReceiverManager struct {
 	SenderIP      string
 	IsRunning     bool
 	cancelGlobal  context.CancelFunc
+	LastCheckIn   time.Time
 }
 
 func NewReceiverManager() *ReceiverManager {
@@ -157,6 +159,7 @@ func (rm *ReceiverManager) runServer(ctx context.Context) {
 			if ok && targetState.OutConn != nil {
 				targetState.Packets++
 				targetState.Bytes += int64(n - StreamIDHeaderSize)
+				targetState.LastPacket = time.Now()
 				targetState.OutConn.Write(buf[StreamIDHeaderSize:n])
 			}
 			rm.mu.RUnlock()
@@ -252,6 +255,10 @@ func (rm *ReceiverManager) checkIn() {
 		fmt.Printf("Failed to decode heartbeat: %v\n", err)
 		return
 	}
+
+	rm.mu.Lock()
+	rm.LastCheckIn = time.Now()
+	rm.mu.Unlock()
 
 	rm.HandleUpdate(payload)
 

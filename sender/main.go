@@ -185,24 +185,31 @@ func main() {
 	}()
 
 	mainTabs := container.NewAppTabs(
-		container.NewTabItem("Config", container.NewVBox(
-			widget.NewLabel("Network Adapter:"),
-			adapterSelect,
-			widget.NewLabel("Data Port:"),
-			portEntry,
-			widget.NewLabel("Manual Target VPN IPs (one per line):"),
-			container.NewScroll(targetsEntry),
-			widget.NewSeparator(),
-			widget.NewLabel("Active Streams:"),
-			addStreamBtn,
-			streamListContainer,
+		container.NewTabItem("Config", container.NewBorder(
+			container.NewVBox(
+				widget.NewLabel("Network Adapter:"),
+				adapterSelect,
+				widget.NewLabel("Unicast Data Port (Watcher Port):"),
+				portEntry,
+				widget.NewSeparator(),
+				addStreamBtn,
+			),
+			nil, nil, nil,
+			container.NewVScroll(streamListContainer),
 		)),
-		container.NewTabItem("Dashboard", container.NewVBox(
-			container.NewHBox(startBtn, stopBtn),
-			widget.NewSeparator(),
-			packetsLabel,
-			bytesLabel,
-			widget.NewLabel("Target Status:"),
+		container.NewTabItem("Dashboard", container.NewBorder(
+			container.NewVBox(
+				container.NewHBox(startBtn, stopBtn),
+				widget.NewLabel(fmt.Sprintf("Service Status: %s", func() string {
+					if nm.isRunning { return "Running (Awaiting Watchers)" }
+					return "Stopped"
+				}())),
+				widget.NewSeparator(),
+				packetsLabel,
+				bytesLabel,
+				widget.NewLabelWithStyle("Active Watchers:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			),
+			nil, nil, nil,
 			container.NewVScroll(statusLabel),
 		)),
 	)
