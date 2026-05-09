@@ -15,7 +15,7 @@ import (
 
 type StreamConfig struct {
 	ID                  string `json:"id"`
-	DroneName           string `json:"drone_name"`
+	StreamName          string `json:"stream_name"`
 	SourceMulticastIP   string `json:"source_multicast_ip"`
 	SourceMulticastPort int    `json:"source_multicast_port"`
 	Enabled             bool   `json:"enabled"`
@@ -169,9 +169,9 @@ func (rm *ReceiverManager) runServer(ctx context.Context) {
 
 func (rm *ReceiverManager) generateWinTAKAlias(s StreamConfig) {
 	xml := fmt.Sprintf(`<video><alias>%s</alias><address>%s</address><port>%d</port><protocol>udp</protocol></video>`,
-		s.DroneName, s.SourceMulticastIP, s.SourceMulticastPort)
+		s.StreamName, s.SourceMulticastIP, s.SourceMulticastPort)
 
-	filename := fmt.Sprintf("%s.xml", s.DroneName)
+	filename := fmt.Sprintf("%s.xml", s.StreamName)
 
 	// Local directory
 	os.WriteFile(filename, []byte(xml), 0644)
@@ -214,7 +214,7 @@ func (rm *ReceiverManager) Stop() {
 }
 
 func (rm *ReceiverManager) registrationLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	rm.checkIn()

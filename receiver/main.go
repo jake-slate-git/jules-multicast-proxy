@@ -48,7 +48,7 @@ func main() {
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("Service Status: %s\n", func() string {
 				if rm.IsRunning {
-					if !rm.LastCheckIn.IsZero() && time.Since(rm.LastCheckIn) < 45*time.Second {
+					if !rm.LastCheckIn.IsZero() && time.Since(rm.LastCheckIn) < 15*time.Second {
 						return "Connected (Active)"
 					}
 					return "Running (Waiting for Sender)"
@@ -62,7 +62,7 @@ func main() {
 			sb.WriteString(fmt.Sprintf("Listening on UDP Port: %d\n", rm.DataPort))
 			sb.WriteString("------------------------------------------\n")
 			for _, state := range rm.ActiveStreams {
-				sb.WriteString(fmt.Sprintf("Drone: %s\n", state.Config.DroneName))
+				sb.WriteString(fmt.Sprintf("Stream: %s\n", state.Config.StreamName))
 				sb.WriteString(fmt.Sprintf("  Multicast: %s:%d\n", state.Config.SourceMulticastIP, state.Config.SourceMulticastPort))
 				sb.WriteString(fmt.Sprintf("  Last Heartbeat: %s\n", state.LastSeen.Format("15:04:05")))
 

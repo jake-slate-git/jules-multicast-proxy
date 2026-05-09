@@ -21,7 +21,7 @@ func TestConfigPersistence(t *testing.T) {
 		c.AdapterName = "TestAdapter"
 		c.DataPort = 1234
 		c.Streams = []StreamConfig{
-			{ID: "1", DroneName: "TestDrone", Enabled: true},
+			{ID: "1", StreamName: "TestDrone", Enabled: true},
 		}
 	})
 
@@ -47,7 +47,7 @@ func TestConfigPersistence(t *testing.T) {
 
 func TestHeartbeatPayload(t *testing.T) {
 	streams := []StreamConfig{
-		{ID: "1", DroneName: "Drone1", Enabled: true},
+		{ID: "1", StreamName: "Drone1", Enabled: true},
 	}
 	payload := HeartbeatPayload{
 		Streams:  streams,

@@ -78,8 +78,6 @@ func main() {
 	refreshStreams = func() {
 		conf := cm.GetConfig()
 		if len(conf.Streams) == lastStreamCount {
-			// Basic heuristic to avoid full rebuild if count hasn't changed.
-			// In a real app, you'd compare actual content or use a List widget.
 			return
 		}
 		lastStreamCount = len(conf.Streams)
@@ -94,7 +92,7 @@ func main() {
 			}
 
 			row := container.NewHBox(
-				widget.NewLabel(fmt.Sprintf("%s (%s:%d)", stream.DroneName, stream.SourceMulticastIP, stream.SourceMulticastPort)),
+				widget.NewLabel(fmt.Sprintf("%s (%s:%d)", stream.StreamName, stream.SourceMulticastIP, stream.SourceMulticastPort)),
 				widget.NewLabel(status),
 				widget.NewButton("Delete", func() {
 					cm.UpdateConfig(func(c *AppConfig) {
@@ -111,12 +109,12 @@ func main() {
 
 	// Add Stream Dialog
 	addStreamBtn := widget.NewButton("Add Stream", func() {
-		droneEntry := widget.NewEntry()
+		nameEntry := widget.NewEntry()
 		ipEntry := widget.NewEntry()
 		portEntry := widget.NewEntry()
 
 		items := []*widget.FormItem{
-			{Text: "Drone Name", Widget: droneEntry},
+			{Text: "Stream Name", Widget: nameEntry},
 			{Text: "Multicast IP", Widget: ipEntry},
 			{Text: "Multicast Port", Widget: portEntry},
 		}
@@ -129,7 +127,7 @@ func main() {
 				rand.Read(idBytes)
 				newStream := StreamConfig{
 					ID:                  hex.EncodeToString(idBytes),
-					DroneName:           droneEntry.Text,
+					StreamName:          nameEntry.Text,
 					SourceMulticastIP:   ipEntry.Text,
 					SourceMulticastPort: p,
 					Enabled:             true,
