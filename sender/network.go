@@ -1,13 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/ipv4"
@@ -16,7 +17,7 @@ import (
 type NetworkManager struct {
 	cm        *ConfigManager
 	statusMu  sync.RWMutex
-	TargetStatus map[string]string
+	Watchers  map[string]time.Time
 	PacketsSent  int64
 	BytesSent    int64
 	isRunning    bool
@@ -26,7 +27,7 @@ type NetworkManager struct {
 func NewNetworkManager(cm *ConfigManager) *NetworkManager {
 	return &NetworkManager{
 		cm:           cm,
-		TargetStatus: make(map[string]string),
+		Watchers:     make(map[string]time.Time),
 	}
 }
 
@@ -51,13 +52,16 @@ func (nm *NetworkManager) Start() {
 
 	config := nm.cm.GetConfig()
 
-	// Start Heartbeat routine
-	go nm.heartbeatLoop(ctx)
+	// Start Control Plane Server
+	go nm.runControlServer(ctx)
+
+	// Start Watcher Cleanup routine
+	go nm.watcherCleanupLoop(ctx)
 
 	// Start a Data Plane routine for each enabled stream
 	for _, stream := range config.Streams {
 		if stream.Enabled {
-			go nm.runStream(ctx, stream, config.AdapterName, config.TargetIPs, config.DataPort)
+			go nm.runStream(ctx, stream, config.AdapterName)
 		}
 	}
 }
@@ -71,56 +75,75 @@ func (nm *NetworkManager) Stop() {
 	nm.isRunning = false
 }
 
-func (nm *NetworkManager) heartbeatLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+func (nm *NetworkManager) runControlServer(ctx context.Context) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		ip := strings.Split(r.RemoteAddr, ":")[0]
+		nm.statusMu.Lock()
+		nm.Watchers[ip] = time.Now()
+		nm.statusMu.Unlock()
+
+		config := nm.cm.GetConfig()
+		payload := HeartbeatPayload{
+			Streams:  config.Streams,
+			DataPort: config.DataPort,
+		}
+		json.NewEncoder(w).Encode(payload)
+	})
+
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
+	go func() {
+		<-ctx.Done()
+		server.Shutdown(context.Background())
+	}()
+
+	fmt.Println("Control Plane listening on :8080")
+	server.ListenAndServe()
+}
+
+func (nm *NetworkManager) watcherCleanupLoop(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-
-	nm.sendHeartbeats()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			nm.sendHeartbeats()
+			nm.statusMu.Lock()
+			for ip, lastSeen := range nm.Watchers {
+				if time.Since(lastSeen) > 45*time.Second {
+					delete(nm.Watchers, ip)
+				}
+			}
+			nm.statusMu.Unlock()
 		}
 	}
 }
 
-func (nm *NetworkManager) sendHeartbeats() {
-	config := nm.cm.GetConfig()
-	payload := HeartbeatPayload{
-		Streams:  config.Streams,
-		DataPort: config.DataPort,
-	}
-	jsonData, _ := json.Marshal(payload)
-
-	for _, target := range config.TargetIPs {
-		go func(ip string) {
-			url := fmt.Sprintf("http://%s:8080/update", ip)
-			client := http.Client{Timeout: 5 * time.Second}
-			resp, err := client.Post(url, "application/json", bytes.NewBuffer(jsonData))
-
-			nm.statusMu.Lock()
-			if err != nil {
-				nm.TargetStatus[ip] = fmt.Sprintf("Error: %v", err)
-			} else {
-				nm.TargetStatus[ip] = fmt.Sprintf("%s OK", resp.Status)
-				resp.Body.Close()
-			}
-			nm.statusMu.Unlock()
-		}(target)
-	}
-}
-
-func (nm *NetworkManager) runStream(ctx context.Context, stream StreamConfig, adapterName string, targets []string, dataPort int) {
+func (nm *NetworkManager) runStream(ctx context.Context, stream StreamConfig, adapterName string) {
 	ifi, err := net.InterfaceByName(adapterName)
 	if err != nil {
 		fmt.Printf("Error finding interface %s: %v\n", adapterName, err)
 		return
 	}
 
-	c, err := net.ListenPacket("udp4", fmt.Sprintf("0.0.0.0:%d", stream.SourceMulticastPort))
+	// For Windows/Cross-platform socket reuse, we must use raw control on the listener.
+	// This ensures multiple drones can share the same source port on different multicast IPs.
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			var err error
+			c.Control(func(fd uintptr) {
+				err = setReuseAddr(fd)
+			})
+			return err
+		},
+	}
+
+	c, err := lc.ListenPacket(ctx, "udp4", fmt.Sprintf("0.0.0.0:%d", stream.SourceMulticastPort))
 	if err != nil {
 		fmt.Printf("Error listening on port %d: %v\n", stream.SourceMulticastPort, err)
 		return
@@ -138,7 +161,7 @@ func (nm *NetworkManager) runStream(ctx context.Context, stream StreamConfig, ad
 		fmt.Printf("Error setting multicast loopback: %v\n", err)
 	}
 
-	// Prepare binary header (using first 8 bytes of ID as a simple unique prefix)
+	// Prepare binary header (ID is already a hex string of 8 chars/4 bytes)
 	header := make([]byte, StreamIDHeaderSize)
 	copy(header, stream.ID)
 
@@ -171,17 +194,34 @@ func (nm *NetworkManager) runStream(ctx context.Context, stream StreamConfig, ad
 				return
 			}
 
-			// Update target addresses only if config changed
+			// Update target addresses from dynamic watchers AND manual config
 			config := nm.cm.GetConfig()
-			if !equalStrings(lastTargets, config.TargetIPs) || lastPort != config.DataPort {
+			nm.statusMu.RLock()
+			var combinedTargets []string
+			combinedTargets = append(combinedTargets, config.TargetIPs...)
+			for ip := range nm.Watchers {
+				found := false
+				for _, mt := range config.TargetIPs {
+					if mt == ip {
+						found = true
+						break
+					}
+				}
+				if !found {
+					combinedTargets = append(combinedTargets, ip)
+				}
+			}
+			nm.statusMu.RUnlock()
+
+			if !equalStrings(lastTargets, combinedTargets) || lastPort != config.DataPort {
 				targetAddrs = nil
-				for _, t := range config.TargetIPs {
+				for _, t := range combinedTargets {
 					addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", t, config.DataPort))
 					if err == nil {
 						targetAddrs = append(targetAddrs, addr)
 					}
 				}
-				lastTargets = config.TargetIPs
+				lastTargets = combinedTargets
 				lastPort = config.DataPort
 			}
 

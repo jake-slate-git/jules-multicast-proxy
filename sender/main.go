@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -123,8 +125,10 @@ func main() {
 			if b {
 				var p int
 				fmt.Sscanf(portEntry.Text, "%d", &p)
+				idBytes := make([]byte, 4)
+				rand.Read(idBytes)
 				newStream := StreamConfig{
-					ID:                  fmt.Sprintf("%d", time.Now().UnixNano()),
+					ID:                  hex.EncodeToString(idBytes),
 					DroneName:           droneEntry.Text,
 					SourceMulticastIP:   ipEntry.Text,
 					SourceMulticastPort: p,
@@ -170,8 +174,8 @@ func main() {
 			bytesLabel.SetText(fmt.Sprintf("Bytes Sent: %d KB", nm.BytesSent/1024))
 
 			var sb strings.Builder
-			for ip, status := range nm.TargetStatus {
-				sb.WriteString(fmt.Sprintf("%s: %s\n", ip, status))
+			for ip, lastSeen := range nm.Watchers {
+				sb.WriteString(fmt.Sprintf("%s (Active, Last seen: %s)\n", ip, lastSeen.Format("15:04:05")))
 			}
 			statusLabel.SetText(sb.String())
 			nm.statusMu.RUnlock()
@@ -186,7 +190,7 @@ func main() {
 			adapterSelect,
 			widget.NewLabel("Data Port:"),
 			portEntry,
-			widget.NewLabel("Target VPN IPs (one per line):"),
+			widget.NewLabel("Manual Target VPN IPs (one per line):"),
 			container.NewScroll(targetsEntry),
 			widget.NewSeparator(),
 			widget.NewLabel("Active Streams:"),

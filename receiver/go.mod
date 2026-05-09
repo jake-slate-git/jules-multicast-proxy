@@ -1,6 +1,6 @@
 module github.com/jules/multicast-proxy/receiver
 
-go 1.24.3
+go 1.24
 
 require fyne.io/fyne/v2 v2.5.5
 
