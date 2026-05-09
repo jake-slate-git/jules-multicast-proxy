@@ -9,7 +9,7 @@ import (
 
 type StreamConfig struct {
 	ID                  string `json:"id"`
-	DroneName           string `json:"drone_name"`
+	StreamName          string `json:"stream_name"`
 	SourceMulticastIP   string `json:"source_multicast_ip"`
 	SourceMulticastPort int    `json:"source_multicast_port"`
 	Enabled             bool   `json:"enabled"`

@@ -106,7 +106,7 @@ func (nm *NetworkManager) runControlServer(ctx context.Context) {
 }
 
 func (nm *NetworkManager) watcherCleanupLoop(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -115,7 +115,7 @@ func (nm *NetworkManager) watcherCleanupLoop(ctx context.Context) {
 		case <-ticker.C:
 			nm.statusMu.Lock()
 			for ip, lastSeen := range nm.Watchers {
-				if time.Since(lastSeen) > 45*time.Second {
+				if time.Since(lastSeen) > 15*time.Second {
 					delete(nm.Watchers, ip)
 				}
 			}

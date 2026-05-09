@@ -15,7 +15,7 @@ func TestReceiverHandleUpdate(t *testing.T) {
 	payload := HeartbeatPayload{
 		DataPort: 7000,
 		Streams: []StreamConfig{
-			{ID: "stream1", DroneName: "Drone1", SourceMulticastIP: "239.1.1.1", SourceMulticastPort: 5001, Enabled: true},
+			{ID: "stream1", StreamName: "Drone1", SourceMulticastIP: "239.1.1.1", SourceMulticastPort: 5001, Enabled: true},
 		},
 	}
 
@@ -32,8 +32,8 @@ func TestReceiverHandleUpdate(t *testing.T) {
 	if !ok {
 		t.Fatal("stream1 not found in active streams")
 	}
-	if stream.Config.DroneName != "Drone1" {
-		t.Errorf("Expected Drone1, got %s", stream.Config.DroneName)
+	if stream.Config.StreamName != "Drone1" {
+		t.Errorf("Expected Drone1, got %s", stream.Config.StreamName)
 	}
 	rm.mu.RUnlock()
 
@@ -47,7 +47,7 @@ func TestReceiverHandleUpdate(t *testing.T) {
 func TestReceiverRegistration(t *testing.T) {
 	payload := HeartbeatPayload{
 		DataPort: 8000,
-		Streams:  []StreamConfig{{ID: "s2", DroneName: "D2", Enabled: true}},
+		Streams:  []StreamConfig{{ID: "s2", StreamName: "D2", Enabled: true}},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
