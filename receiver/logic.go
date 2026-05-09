@@ -42,6 +42,9 @@ type ReceiverManager struct {
 	ActiveStreams map[string]*StreamState
 	DataPort      int
 	cancelServer  context.CancelFunc
+	SenderIP      string
+	IsRunning     bool
+	cancelGlobal  context.CancelFunc
 }
 
 func NewReceiverManager() *ReceiverManager {
@@ -149,16 +152,9 @@ func (rm *ReceiverManager) runServer(ctx context.Context) {
 			idPrefix := string(buf[:StreamIDHeaderSize])
 
 			rm.mu.RLock()
-			// We need a way to match the prefix to the full ID
-			var targetState *StreamState
-			for id, state := range rm.ActiveStreams {
-				if strings.HasPrefix(id, idPrefix) {
-					targetState = state
-					break
-				}
-			}
+			targetState, ok := rm.ActiveStreams[idPrefix]
 
-			if targetState != nil && targetState.OutConn != nil {
+			if ok && targetState.OutConn != nil {
 				targetState.Packets++
 				targetState.Bytes += int64(n - StreamIDHeaderSize)
 				targetState.OutConn.Write(buf[StreamIDHeaderSize:n])
@@ -187,18 +183,160 @@ func (rm *ReceiverManager) generateWinTAKAlias(s StreamConfig) {
 	}
 }
 
-func (rm *ReceiverManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func (rm *ReceiverManager) Start() {
+	rm.mu.Lock()
+	if rm.IsRunning {
+		rm.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	rm.cancelGlobal = cancel
+	rm.IsRunning = true
+	rm.mu.Unlock()
+
+	go rm.registrationLoop(ctx)
+	go rm.discoveryLoop(ctx)
+}
+
+func (rm *ReceiverManager) Stop() {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if rm.cancelGlobal != nil {
+		rm.cancelGlobal()
+	}
+	if rm.cancelServer != nil {
+		rm.cancelServer()
+	}
+	rm.IsRunning = false
+}
+
+func (rm *ReceiverManager) registrationLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	rm.checkIn()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rm.checkIn()
+		}
+	}
+}
+
+func (rm *ReceiverManager) checkIn() {
+	rm.mu.RLock()
+	senderIP := rm.SenderIP
+	rm.mu.RUnlock()
+
+	if senderIP == "" {
 		return
 	}
 
+	url := fmt.Sprintf("http://%s/register", senderIP)
+	if !strings.Contains(senderIP, ":") {
+		url = fmt.Sprintf("http://%s:8080/register", senderIP)
+	}
+	client := http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(url, "application/json", nil)
+	if err != nil {
+		fmt.Printf("Registration failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
 	var payload HeartbeatPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		fmt.Printf("Failed to decode heartbeat: %v\n", err)
 		return
 	}
 
 	rm.HandleUpdate(payload)
-	w.WriteHeader(http.StatusOK)
+
+	// UDP Hole Punch / Keep-alive
+	go rm.sendKeepAlive(senderIP, payload.DataPort)
+}
+
+func (rm *ReceiverManager) discoveryLoop(ctx context.Context) {
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+
+	rm.scanForSender()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rm.scanForSender()
+		}
+	}
+}
+
+func (rm *ReceiverManager) scanForSender() {
+	rm.mu.RLock()
+	if rm.SenderIP != "" {
+		rm.mu.RUnlock()
+		return // Already have an IP
+	}
+	rm.mu.RUnlock()
+
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
+				continue
+			}
+
+			// Scan first 512 IPs in this subnet
+			baseIP := ipnet.IP.Mask(ipnet.Mask).To4()
+			for i := 0; i < 512; i++ {
+				ip := make(net.IP, 4)
+				copy(ip, baseIP)
+
+				// Increment IP logic
+				ip[3] += byte(i % 256)
+				ip[2] += byte(i / 256)
+
+				if ip.Equal(ipnet.IP) {
+					continue
+				}
+
+				targetIP := ip.String()
+				// Use a small sleep to avoid overwhelming the OS with 512 concurrent network requests
+				time.Sleep(2 * time.Millisecond)
+				go func(tIP string) {
+					url := fmt.Sprintf("http://%s:8080/register", tIP)
+					client := http.Client{Timeout: 500 * time.Millisecond}
+					resp, err := client.Post(url, "application/json", nil)
+					if err == nil {
+						resp.Body.Close()
+						rm.mu.Lock()
+						if rm.SenderIP == "" {
+							rm.SenderIP = tIP
+							fmt.Printf("Auto-discovered sender at %s\n", tIP)
+						}
+						rm.mu.Unlock()
+					}
+				}(targetIP)
+			}
+		}
+	}
+}
+
+func (rm *ReceiverManager) sendKeepAlive(ip string, port int) {
+	addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", ip, port))
+	if err != nil {
+		return
+	}
+	conn, err := net.DialUDP("udp4", nil, addr)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	conn.Write([]byte("keepalive"))
 }

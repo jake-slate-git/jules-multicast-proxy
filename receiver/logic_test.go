@@ -44,24 +44,22 @@ func TestReceiverHandleUpdate(t *testing.T) {
 	defer os.Remove("Drone1.xml")
 }
 
-func TestReceiverHTTP(t *testing.T) {
-	rm := NewReceiverManager()
-	server := httptest.NewServer(rm)
-	defer server.Close()
-
+func TestReceiverRegistration(t *testing.T) {
 	payload := HeartbeatPayload{
 		DataPort: 8000,
 		Streams:  []StreamConfig{{ID: "s2", DroneName: "D2", Enabled: true}},
 	}
-	body, _ := json.Marshal(payload)
 
-	resp, err := http.Post(server.URL, "application/json", strings.NewReader(string(body)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected OK, got %v", resp.Status)
-	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(payload)
+	}))
+	defer server.Close()
+
+	rm := NewReceiverManager()
+	u := strings.TrimPrefix(server.URL, "http://")
+	rm.SenderIP = u
+
+	rm.checkIn()
 
 	rm.mu.RLock()
 	if rm.DataPort != 8000 {

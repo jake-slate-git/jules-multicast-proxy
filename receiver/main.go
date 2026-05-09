@@ -18,22 +18,40 @@ func main() {
 
 	rm := NewReceiverManager()
 
-	// Start HTTP Server
-	go func() {
-		http.Handle("/update", rm)
-		if err := http.ListenAndServe(":8080", nil); err != nil {
-			fmt.Printf("HTTP Server failed: %v\n", err)
-		}
-	}()
-
 	// UI
+	senderEntry := widget.NewEntry()
+	senderEntry.SetPlaceHolder("Sender VPN IP (e.g. 10.8.0.1)")
+	senderEntry.OnChanged = func(s string) {
+		rm.mu.Lock()
+		rm.SenderIP = s
+		rm.mu.Unlock()
+	}
+
+	startBtn := widget.NewButton("START", func() {
+		rm.Start()
+	})
+	stopBtn := widget.NewButton("STOP", func() {
+		rm.Stop()
+	})
+
 	statusLabel := widget.NewLabel("")
 
 	go func() {
 		for {
 			time.Sleep(time.Second)
 			rm.mu.RLock()
+			senderIP := rm.SenderIP
+			// Sync entry with discovered IP
+			if senderEntry.Text == "" && senderIP != "" {
+				senderEntry.SetText(senderIP)
+			}
+
 			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("Status: %s\n", func() string {
+				if rm.IsRunning { return "Running" }
+				return "Stopped"
+			}()))
+			sb.WriteString(fmt.Sprintf("Sender: %s\n", senderIP))
 			sb.WriteString(fmt.Sprintf("Listening on UDP Port: %d\n", rm.DataPort))
 			sb.WriteString("------------------------------------------\n")
 			for _, state := range rm.ActiveStreams {
@@ -50,6 +68,10 @@ func main() {
 
 	w.SetContent(container.NewVBox(
 		widget.NewLabelWithStyle("Receiver Status Dashboard", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewSeparator(),
+		widget.NewLabel("Sender IP:"),
+		senderEntry,
+		container.NewHBox(startBtn, stopBtn),
 		widget.NewSeparator(),
 		container.NewVScroll(statusLabel),
 	))
